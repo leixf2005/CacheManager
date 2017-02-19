@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using CacheManager.Core;
@@ -6,7 +7,6 @@ using CacheManager.Core;
 using Enyim.Caching;
 using Enyim.Caching.Configuration;
 #endif
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace CacheManager.Config.Tests
@@ -15,7 +15,38 @@ namespace CacheManager.Config.Tests
     {
         public static void Main(string[] args)
         {
+            var c = new BaseCacheManager<string>(
+                new Core.ConfigurationBuilder()
+                    .WithRedisConfiguration("redis", "localhost,allowAdmin=true")
+                    .WithJsonSerializer()
+                    .WithRedisCacheHandle("redis")
+                    .Build());
+
+            c.Clear();
+            var counter = 0;
+            var swatch = Stopwatch.StartNew();
+            for (var i = 0; i < 500000; i++)
+            {
+                c.AddAsync("key" + i, i.ToString())
+                    .ContinueWith((t) =>
+                    {
+                        if (t.Result)
+                        {
+                            Interlocked.Increment(ref counter);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Not added key" + i);
+                        }
+                    });
+            }
+
+            var added = c.AddAsync("key3", "value3").Result;
+            var elapsed = swatch.ElapsedMilliseconds;
+
             int iterations = 10;
+            Console.WriteLine($"Elapsed {elapsed} added {counter}.");
+            return;
             try
             {
                 var builder = new Core.ConfigurationBuilder("myCache");
@@ -24,7 +55,7 @@ namespace CacheManager.Config.Tests
                     f.AddConsole(LogLevel.Warning);
                     f.AddDebug(LogLevel.Debug);
                 });
-                
+
                 builder.WithRetryTimeout(1000);
                 builder.WithMaxRetries(10);
                 builder.WithDictionaryHandle()
@@ -54,7 +85,7 @@ namespace CacheManager.Config.Tests
                 //memcachedCfg.AddServer("localhost", 11211);
                 //builder.WithMemcachedCacheHandle(memcachedCfg);
 #endif
-                 
+
                 var cacheA = new BaseCacheManager<string>(builder.Build());
                 cacheA.Clear();
 

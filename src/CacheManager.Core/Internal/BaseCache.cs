@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Globalization;
+using System.Threading.Tasks;
 using CacheManager.Core.Logging;
 using static CacheManager.Core.Utility.Guard;
 
@@ -621,6 +622,75 @@ namespace CacheManager.Core.Internal
             {
                 return (TOut)value;
             }
+        }
+
+
+        /// <inheritdoc />
+        public Task<bool> AddAsync(string key, TCacheValue value)
+        {
+            var item = new CacheItem<TCacheValue>(key, value);
+            return this.AddAsync(item);
+        }
+
+
+        /// <inheritdoc />
+        public Task<bool> AddAsync(string key, TCacheValue value, string region)
+        {
+            var item = new CacheItem<TCacheValue>(key, region, value);
+            return this.AddAsync(item);
+        }
+
+        /// <inheritdoc />
+        public Task<bool> AddAsync(CacheItem<TCacheValue> item)
+        {
+            NotNull(item, nameof(item));
+
+            return this.AddInternalAsync(item);
+        }
+
+        /// <summary>
+        /// Adds a value to the cache.
+        /// </summary>
+        /// <param name="item">The <c>CacheItem</c> to be added to the cache.</param>
+        /// <returns>
+        /// <c>true</c> if the key was not already added to the cache, <c>false</c> otherwise.
+        /// </returns>
+        protected internal abstract Task<bool> AddInternalAsync(CacheItem<TCacheValue> item);
+
+        /// <inheritdoc />
+        public Task<TCacheValue> GetAsync(string key)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <inheritdoc />
+        public Task<TCacheValue> GetAsync(string key, string region)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <inheritdoc />
+        public Task<TOut> GetAsync<TOut>(string key)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <inheritdoc />
+        public Task<TOut> GetAsync<TOut>(string key, string region)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <inheritdoc />
+        public Task<CacheItem<TCacheValue>> GetCacheItemAsync(string key)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <inheritdoc />
+        public Task<CacheItem<TCacheValue>> GetCacheItemAsync(string key, string region)
+        {
+            throw new NotImplementedException();
         }
     }
 }

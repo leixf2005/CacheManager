@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using CacheManager.Core.Logging;
 using static CacheManager.Core.Utility.Guard;
 
@@ -255,6 +256,27 @@ namespace CacheManager.Core.Internal
             this.CheckDisposed();
             item = this.GetItemExpiration(item);
             return this.AddInternalPrepared(item);
+        }
+
+
+        /// <inheritdoc />
+        protected internal override Task<bool> AddInternalAsync(CacheItem<TCacheValue> item)
+        {
+            this.CheckDisposed();
+            item = this.GetItemExpiration(item);
+            return this.AddInternalPreparedAsync(item);
+        }
+
+        /// <inheritdoc />
+        protected virtual Task<bool> AddInternalPreparedAsync(CacheItem<TCacheValue> item)
+        {
+#if NET40
+            var source = new TaskCompletionSource<bool>();
+            source.TrySetResult(AddInternalPrepared(item));
+            return source.Task;
+#else
+            return Task.FromResult(AddInternalPrepared(item));
+#endif
         }
 
         /// <summary>

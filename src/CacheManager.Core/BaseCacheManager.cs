@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using CacheManager.Core.Internal;
 using CacheManager.Core.Logging;
 using static CacheManager.Core.Utility.Guard;
@@ -335,6 +336,63 @@ namespace CacheManager.Core
             return result;
         }
 
+#if !NET40
+
+        /// <inheritdoc />
+        protected internal override async Task<bool> AddInternalAsync(CacheItem<TCacheValue> item)
+        {
+            NotNull(item, nameof(item));
+
+            this.CheckDisposed();
+            if (this.logTrace)
+            {
+                this.Logger.LogTrace("Add [{0}] started.", item);
+            }
+
+            var handleIndex = this.cacheHandles.Length - 1;
+
+            var result = await AddItemToHandleAsync(item, this.cacheHandles[handleIndex]).ConfigureAwait(false);
+
+            // evict from other handles in any case because if it exists, it might be a different version
+            // if not exist, its just a sanity check to invalidate other versions in upper layers.
+            this.EvictFromOtherHandles(item.Key, item.Region, handleIndex);
+
+            if (result)
+            {
+                // update backplane
+                if (this.cacheBackplane != null)
+                {
+                    if (string.IsNullOrWhiteSpace(item.Region))
+                    {
+                        this.cacheBackplane.NotifyChange(item.Key, CacheItemChangedEventAction.Add);
+                    }
+                    else
+                    {
+                        this.cacheBackplane.NotifyChange(item.Key, item.Region, CacheItemChangedEventAction.Add);
+                    }
+
+                    if (this.logTrace)
+                    {
+                        this.Logger.LogTrace("Notified backplane 'change' because [{0}] was added.", item);
+                    }
+                }
+
+                // trigger only once and not per handle and only if the item was added!
+                this.TriggerOnAdd(item.Key, item.Region);
+            }
+
+            return result;
+        }
+
+#else
+        
+        /// <inheritdoc />
+        protected internal override Task<bool> AddInternalAsync(CacheItem<TCacheValue> item)
+        {
+            throw new NotImplementedException();
+        }
+#endif
+
         /// <inheritdoc />
         protected internal override void PutInternal(CacheItem<TCacheValue> item)
         {
@@ -551,6 +609,26 @@ namespace CacheManager.Core
             }
 
             return false;
+        }
+
+        private static Task<bool> AddItemToHandleAsync(CacheItem<TCacheValue> item, BaseCacheHandle<TCacheValue> handle)
+        {
+            var task = handle.AddAsync(item);
+            task.ContinueWith((t) =>
+            {
+                if (t.Result)
+                {
+                    handle.Stats.OnAdd(item);
+                }
+            });
+            return task;
+            //if ()
+            //{
+            //    handle.Stats.OnAdd(item);
+            //    return true;
+            //}
+
+            //return false;
         }
 
         private static void ClearHandles(BaseCacheHandle<TCacheValue>[] handles)
