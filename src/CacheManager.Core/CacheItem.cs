@@ -116,10 +116,10 @@ namespace CacheManager.Core
             this.Region = region;
             this.Value = value;
             this.ValueType = value.GetType();
+            this.ValueTypeName = this.ValueType.Name;
             this.ExpirationMode = expiration ?? ExpirationMode.Default;
             this.ExpirationTimeout = (this.ExpirationMode == ExpirationMode.None || this.ExpirationMode == ExpirationMode.Default) ? TimeSpan.Zero : timeout ?? TimeSpan.Zero;
             this.UsesExpirationDefaults = expirationDefaults;
-
 
             // validation check for very high expiration time.
             // Otherwise this will lead to all kinds of errors (e.g. adding time to sliding while using a TimeSpan with long.MaxValue ticks)
@@ -209,6 +209,11 @@ namespace CacheManager.Core
         /// </summary>
         /// <value>The type of the cache value.</value>
         public Type ValueType { get; }
+
+        /// <summary>
+        ///
+        /// </summary>
+        public string ValueTypeName { get; }
 
         /// <summary>
         /// Gets a value indicating if the cache item uses the cache handle's configured expiration.

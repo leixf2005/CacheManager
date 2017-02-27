@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using CacheManager.Core;
@@ -25,13 +26,13 @@ namespace CacheManager.Redis
     [RequiresSerializer]
     public class RedisCacheHandle<TCacheValue> : BaseCacheHandle<TCacheValue>
     {
-        private const string HashFieldCreated = "created";
-        private const string HashFieldExpirationMode = "expiration";
-        private const string HashFieldExpirationTimeout = "timeout";
-        private const string HashFieldType = "type";
-        private const string HashFieldValue = "value";
-        private const string HashFieldVersion = "version";
-        private const string HashFieldUsesDefaultExp = "defaultExpiration";
+        private const string HashFieldCreated = "c";
+        private const string HashFieldExpirationMode = "m";
+        private const string HashFieldExpirationTimeout = "t";
+        private const string HashFieldType = "vt";
+        private const string HashFieldValue = "v";
+        private const string HashFieldVersion = "ver";
+        private const string HashFieldUsesDefaultExp = "d";
 
         private static readonly string ScriptAdd = $@"
 if redis.call('HSETNX', KEYS[1], '{HashFieldValue}', ARGV[1]) == 1 then
@@ -368,11 +369,16 @@ return result";
         protected override bool AddInternalPrepared(CacheItem<TCacheValue> item) =>
             this.Retry(() => this.Set(item, StackRedis.When.NotExists, true));
 
+#if NET40
+#else
+
         /// <inheritdoc />
         protected override Task<bool> AddInternalPreparedAsync(CacheItem<TCacheValue> item)
         {
-            return this.SetAsync(item, StackRedis.When.NotExists, true);
+            return this.RetryAsync(() => this.SetAsync(item, StackRedis.When.NotExists, true));
         }
+
+#endif
 
         /// <summary>
         /// Performs application-defined tasks associated with freeing, releasing, or resetting
@@ -674,6 +680,13 @@ return result";
                     return true;
                 });
 
+#if !NET40
+
+        private Task<T> RetryAsync<T>(Func<Task<T>> retryme) =>
+           RetryHelper.RetryAsync(retryme, this.managerConfiguration.RetryTimeout, this.managerConfiguration.MaxRetries, this.Logger);
+
+#endif
+
         private bool Set(CacheItem<TCacheValue> item, StackRedis.When when, bool sync = false)
         {
             if (!this.isLuaAllowed)
@@ -758,6 +771,40 @@ return result";
 
         private async Task<bool> SetAsync(CacheItem<TCacheValue> item, StackRedis.When when, bool sync = false)
         {
+            var result = await SetAsyncPerf(item, when, sync);
+            return result.Success;
+        }
+
+#pragma warning disable CS1591
+
+        public struct SetResult
+
+        {
+            public bool Success { get; set; }
+
+            public long StageA { get; set; }
+
+            public long StageB { get; set; }
+
+            public long StageC { get; set; }
+
+            public long StageD { get; set; }
+        }
+
+#pragma warning restore CS1591
+
+        /// <summary>
+        ///
+        /// </summary>
+        /// <param name="item"></param>
+        /// <param name="when"></param>
+        /// <param name="sync"></param>
+        /// <returns></returns>
+        [CLSCompliant(false)]
+        public async Task<SetResult> SetAsyncPerf(CacheItem<TCacheValue> item, StackRedis.When when, bool sync = false)
+        {
+            var swatch = Stopwatch.StartNew();
+            var setResult = new SetResult();
             if (!this.isLuaAllowed)
             {
                 throw new NotImplementedException("Lua support required for async implementation.");
@@ -765,19 +812,21 @@ return result";
 
             var fullKey = GetKey(item.Key, item.Region);
             var value = this.ToRedisValue(item.Value);
-
+            setResult.StageA = swatch.ElapsedTicks;
             var flags = sync ? StackRedis.CommandFlags.None : StackRedis.CommandFlags.FireAndForget;
 
             // ARGV [1]: value, [2]: type, [3]: expirationMode, [4]: expirationTimeout(millis), [5]: created(ticks)
-            var parameters = new StackRedis.RedisValue[]
+            var parameters = new StackRedis.RedisValue[6]
             {
                 value,
-                item.ValueType.AssemblyQualifiedName,
+                item.ValueTypeName,
                 (int)item.ExpirationMode,
                 (long)item.ExpirationTimeout.TotalMilliseconds,
                 item.CreatedUtc.Ticks,
                 item.UsesExpirationDefaults
             };
+
+            setResult.StageB = swatch.ElapsedTicks;
 
             StackRedis.RedisResult result;
             if (when == StackRedis.When.NotExists)
@@ -788,7 +837,9 @@ return result";
             {
                 result = await this.EvalAsync(ScriptType.Put, fullKey, parameters, flags).ConfigureAwait(false);
             }
-            
+
+            setResult.StageC = swatch.ElapsedTicks;
+
             if (result == null)
             {
                 if (flags.HasFlag(StackRedis.CommandFlags.FireAndForget))
@@ -796,11 +847,13 @@ return result";
                     if (!string.IsNullOrWhiteSpace(item.Region))
                     {
                         // setting region lookup key if region is being used
-                        this.connection.Database.HashSet(item.Region, fullKey, "regionKey", StackRedis.When.Always, StackRedis.CommandFlags.FireAndForget);
+                        await this.connection.Database.HashSetAsync(item.Region, fullKey, "regionKey", StackRedis.When.Always, StackRedis.CommandFlags.FireAndForget);
                     }
 
                     // put runs via fire and forget, so we don't get a result back
-                    return true;
+                    setResult.Success = false;
+                    setResult.StageD = swatch.ElapsedTicks;
+                    return setResult;
                 }
 
                 // should never happen, something went wrong with the script
@@ -815,7 +868,9 @@ return result";
                     {
                         this.Logger.LogInfo("DB {0} | Failed to add item [{1}] because it exists.", this.connection.Database.Database, item.ToString());
                     }
-                    return false;
+                    setResult.Success = false;
+                    setResult.StageD = swatch.ElapsedTicks;
+                    return setResult;
                 }
 
                 var resultValue = (StackRedis.RedisValue)result;
@@ -827,14 +882,18 @@ return result";
                     {
                         // setting region lookup key if region is being used
                         // we cannot do that within the lua because the region could be on another cluster node!
-                        this.connection.Database.HashSet(item.Region, fullKey, "regionKey", StackRedis.When.Always, StackRedis.CommandFlags.FireAndForget);
+                        await this.connection.Database.HashSetAsync(item.Region, fullKey, "regionKey", StackRedis.When.Always, StackRedis.CommandFlags.FireAndForget);
                     }
 
-                    return true;
+                    setResult.Success = true;
+                    setResult.StageD = swatch.ElapsedTicks;
+                    return setResult;
                 }
 
                 this.Logger.LogWarn("DB {0} | Failed to set item [{1}]: {2}.", this.connection.Database.Database, item.ToString(), resultValue.ToString());
-                return false;
+                setResult.Success = false;
+                setResult.StageD = swatch.ElapsedTicks;
+                return setResult;
             }
         }
 
@@ -896,14 +955,7 @@ return result";
         {
             if (!this.scriptsLoaded)
             {
-                lock (this.lockObject)
-                {
-                    if (!this.scriptsLoaded)
-                    {
-                        this.LoadScripts();
-                        this.scriptsLoaded = true;
-                    }
-                }
+                this.LoadScripts();
             }
 
             StackRedis.LoadedLuaScript script;
@@ -921,6 +973,7 @@ return result";
             catch (StackRedis.RedisServerException ex) when (ex.Message.StartsWith("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
                 this.Logger.LogInfo("Received NOSCRIPT from server. Reloading scripts...");
+                this.scriptsLoaded = false;
                 this.LoadScripts();
 
                 // retry
@@ -928,18 +981,11 @@ return result";
             }
         }
 
-        private async Task<StackRedis.RedisResult> EvalAsync(ScriptType scriptType, StackRedis.RedisKey redisKey, StackRedis.RedisValue[] values = null, StackRedis.CommandFlags flags = StackRedis.CommandFlags.None)
+        private Task<StackRedis.RedisResult> EvalAsync(ScriptType scriptType, StackRedis.RedisKey redisKey, StackRedis.RedisValue[] values = null, StackRedis.CommandFlags flags = StackRedis.CommandFlags.None)
         {
             if (!this.scriptsLoaded)
             {
-                lock (this.lockObject)
-                {
-                    if (!this.scriptsLoaded)
-                    {
-                        this.LoadScripts();
-                        this.scriptsLoaded = true;
-                    }
-                }
+                this.LoadScripts();
             }
 
             StackRedis.LoadedLuaScript script;
@@ -950,6 +996,11 @@ return result";
                 throw new InvalidOperationException("Something is wrong with the Lua scripts. Seem to be not loaded.");
             }
 
+            return this.EvalAsyncSave(script, redisKey, values, flags);
+        }
+
+        private async Task<StackRedis.RedisResult> EvalAsyncSave(StackRedis.LoadedLuaScript script, StackRedis.RedisKey redisKey, StackRedis.RedisValue[] values = null, StackRedis.CommandFlags flags = StackRedis.CommandFlags.None)
+        {
             try
             {
                 return await this.connection.Database.ScriptEvaluateAsync(script.Hash, new[] { redisKey }, values, flags).ConfigureAwait(false);
@@ -957,6 +1008,7 @@ return result";
             catch (StackRedis.RedisServerException ex) when (ex.Message.StartsWith("NOSCRIPT", StringComparison.OrdinalIgnoreCase))
             {
                 this.Logger.LogInfo("Received NOSCRIPT from server. Reloading scripts...");
+                this.scriptsLoaded = false;
                 this.LoadScripts();
 
                 // retry
@@ -1007,8 +1059,18 @@ return result";
 
         private void LoadScripts()
         {
+            if (this.scriptsLoaded)
+            {
+                return;
+            }
+
             lock (this.lockObject)
             {
+                if (this.scriptsLoaded)
+                {
+                    return;
+                }
+
                 this.Logger.LogInfo("Loading scripts.");
 
                 var putLua = StackRedis.LuaScript.Prepare(ScriptPut);
@@ -1026,6 +1088,8 @@ return result";
                         this.shaScripts[ScriptType.Get] = getLua.Load(server);
                     }
                 }
+
+                this.scriptsLoaded = true;
             }
         }
     }

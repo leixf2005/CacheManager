@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 
 namespace CacheManager.Core
 {
+#if !NET40
     public partial interface ICache<TCacheValue> : IDisposable
     {
         /// <summary>
@@ -296,4 +297,5 @@ namespace CacheManager.Core
         ///// <param name="region">The cache region.</param>
         //void RemoveExpiration(string key, string region);
     }
+#endif
 }

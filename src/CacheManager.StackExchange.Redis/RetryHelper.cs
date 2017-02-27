@@ -113,5 +113,88 @@ namespace CacheManager.Redis
                 retries,
                 logger);
         }
+
+#if !NET40
+
+        public static async Task<T> RetryAsync<T>(Func<Task<T>> retryme, int timeOut, int retries, ILogger logger)
+        {
+            var tries = 0;
+            do
+            {
+                tries++;
+
+                try
+                {
+                    return await retryme().ConfigureAwait(false);
+                }
+
+                // might occur on lua script execution on a readonly slave because the master just died.
+                // Should recover via fail over
+                catch (StackRedis.RedisServerException ex)
+                {
+                    if (tries >= retries)
+                    {
+                        logger.LogError(ex, ErrorMessage, retries);
+                        throw;
+                    }
+
+                    logger.LogWarn(ex, WarningMessage, tries, retries);
+                    
+                    await Task.Delay(timeOut).ConfigureAwait(false);
+                }
+                catch (StackRedis.RedisConnectionException ex)
+                {
+                    if (tries >= retries)
+                    {
+                        logger.LogError(ex, ErrorMessage, retries);
+                        throw;
+                    }
+
+                    logger.LogWarn(ex, WarningMessage, tries, retries);
+
+                    await Task.Delay(timeOut).ConfigureAwait(false);
+                }
+                catch (TimeoutException ex)
+                {
+                    if (tries >= retries)
+                    {
+                        logger.LogError(ex, ErrorMessage, retries);
+                        throw;
+                    }
+
+                    logger.LogWarn(ex, WarningMessage, tries, retries);
+
+                    await Task.Delay(timeOut).ConfigureAwait(false);
+                }
+                catch (AggregateException aggregateException)
+                {
+                    if (tries >= retries)
+                    {
+                        logger.LogError(aggregateException, ErrorMessage, retries);
+                        throw;
+                    }
+
+                    aggregateException.Handle(e =>
+                    {
+                        if (e is StackRedis.RedisConnectionException || e is System.TimeoutException || e is StackRedis.RedisServerException)
+                        {
+                            logger.LogWarn(e, WarningMessage, tries, retries);
+
+                            Task.Delay(timeOut).ConfigureAwait(false).GetAwaiter().GetResult();
+
+                            return true;
+                        }
+
+                        logger.LogCritical("Unhandled exception occurred.", aggregateException);
+                        return false;
+                    });
+                }
+            }
+            while (tries < retries);
+
+            return default(T);
+        }
+
+#endif
     }
 }

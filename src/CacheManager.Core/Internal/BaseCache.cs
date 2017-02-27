@@ -624,7 +624,7 @@ namespace CacheManager.Core.Internal
             }
         }
 
-
+#if !NET40
         /// <inheritdoc />
         public Task<bool> AddAsync(string key, TCacheValue value)
         {
@@ -692,5 +692,7 @@ namespace CacheManager.Core.Internal
         {
             throw new NotImplementedException();
         }
+
+#endif
     }
 }

@@ -258,6 +258,7 @@ namespace CacheManager.Core.Internal
             return this.AddInternalPrepared(item);
         }
 
+#if !NET40
 
         /// <inheritdoc />
         protected internal override Task<bool> AddInternalAsync(CacheItem<TCacheValue> item)
@@ -270,14 +271,10 @@ namespace CacheManager.Core.Internal
         /// <inheritdoc />
         protected virtual Task<bool> AddInternalPreparedAsync(CacheItem<TCacheValue> item)
         {
-#if NET40
-            var source = new TaskCompletionSource<bool>();
-            source.TrySetResult(AddInternalPrepared(item));
-            return source.Task;
-#else
             return Task.FromResult(AddInternalPrepared(item));
-#endif
         }
+
+#endif
 
         /// <summary>
         /// Puts the <paramref name="item"/> into the cache. If the item exists it will get updated

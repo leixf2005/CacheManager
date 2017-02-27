@@ -34,11 +34,6 @@
     }
   },
   "frameworks": {
-    "net40": {
-      "frameworkAssemblies": {
-        "System.Configuration": ""
-      }
-    },
     "net45": {
       "frameworkAssemblies": {
         "System.Configuration": ""
@@ -58,6 +53,11 @@
         "System.Runtime.Extensions": "4.1.0",
         "System.Runtime.InteropServices": "4.1.0",
         "System.Reflection": "4.1.0"
+      }
+    },
+    "net40": {
+      "frameworkAssemblies": {
+        "System.Configuration": ""
       }
     }
   }

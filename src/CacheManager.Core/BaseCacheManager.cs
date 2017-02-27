@@ -384,13 +384,6 @@ namespace CacheManager.Core
             return result;
         }
 
-#else
-        
-        /// <inheritdoc />
-        protected internal override Task<bool> AddInternalAsync(CacheItem<TCacheValue> item)
-        {
-            throw new NotImplementedException();
-        }
 #endif
 
         /// <inheritdoc />
@@ -611,25 +604,28 @@ namespace CacheManager.Core
             return false;
         }
 
-        private static Task<bool> AddItemToHandleAsync(CacheItem<TCacheValue> item, BaseCacheHandle<TCacheValue> handle)
+#if !NET40
+        private static async Task<bool> AddItemToHandleAsync(CacheItem<TCacheValue> item, BaseCacheHandle<TCacheValue> handle)
         {
-            var task = handle.AddAsync(item);
-            task.ContinueWith((t) =>
-            {
-                if (t.Result)
-                {
-                    handle.Stats.OnAdd(item);
-                }
-            });
-            return task;
-            //if ()
+            //var task = handle.AddAsync(item);
+            //task.ContinueWith((t) =>
             //{
-            //    handle.Stats.OnAdd(item);
-            //    return true;
-            //}
+            //    if (t.Result)
+            //    {
+            //        handle.Stats.OnAdd(item);
+            //    }
+            //});
+            //return task;
+            var result = await handle.AddAsync(item);
+            if (result)
+            {
+                handle.Stats.OnAdd(item);
+                return true;
+            }
 
-            //return false;
+            return false;
         }
+#endif
 
         private static void ClearHandles(BaseCacheHandle<TCacheValue>[] handles)
         {
